@@ -82,21 +82,58 @@ def play_youtube(query: str):
         webbrowser.open(f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}")
         return f"Pesquisa de '{query}' aberta no YouTube, Senhor!"
 
-def send_whatsapp_message(phone_number: str = "", message: str = ""):
-    """Envia uma mensagem de WhatsApp usando o n8n no servidor ou abrindo o WhatsApp Web."""
+def add_contact(name: str, phone_number: str):
+    """Salva/adiciona um novo contato de agenda no arquivo contacts.json do Jarvis."""
+    try:
+        contacts_file = os.path.join(os.path.dirname(__file__), "contacts.json")
+        contacts = {}
+        if os.path.exists(contacts_file):
+            try:
+                with open(contacts_file, "r", encoding="utf-8") as f:
+                    contacts = json.load(f)
+            except Exception:
+                contacts = {}
+                
+        phone_clean = re.sub(r'\D', '', phone_number)
+        contacts[name.strip()] = phone_clean or phone_number.strip()
+        
+        with open(contacts_file, "w", encoding="utf-8") as f:
+            json.dump(contacts, f, ensure_ascii=False, indent=4)
+            
+        return f"Contato '{name.strip()}' com número '{phone_clean}' salvo com sucesso na sua agenda, Senhor!"
+    except Exception as e:
+        return f"Erro ao salvar contato: {e}"
+
+def send_whatsapp_message(contact_or_phone: str = "", message: str = ""):
+    """Envia mensagem no WhatsApp resolvendo pelo nome do contato (ex: 'Mãe', 'Pedro') ou número de telefone."""
+    target = contact_or_phone.strip()
+    
+    # Tenta buscar número pelo nome no contacts.json
+    contacts_file = os.path.join(os.path.dirname(__file__), "contacts.json")
+    if os.path.exists(contacts_file):
+        try:
+            with open(contacts_file, "r", encoding="utf-8") as f:
+                contacts = json.load(f)
+                for name, number in contacts.items():
+                    if name.lower() == target.lower() or target.lower() in name.lower():
+                        target = number
+                        break
+        except Exception:
+            pass
+            
+    phone_clean = re.sub(r'\D', '', target)
     try:
         url = f"{N8N_SERVER_URL}/webhook/whatsapp"
-        payload = json.dumps({"phone": phone_number, "message": message}).encode('utf-8')
+        payload = json.dumps({"phone": phone_clean or target, "message": message}).encode('utf-8')
         req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return f"Mensagem enviada via WhatsApp para {phone_number} pelo servidor, Senhor!"
+            return f"Mensagem enviada via WhatsApp para '{contact_or_phone}' pelo servidor, Senhor!"
     except Exception:
         try:
-            phone_clean = re.sub(r'\D', '', phone_number)
             msg_encoded = urllib.parse.quote(message)
             wa_url = f"https://web.whatsapp.com/send?phone={phone_clean}&text={msg_encoded}" if phone_clean else "https://web.whatsapp.com/"
             webbrowser.open(wa_url)
-            return f"WhatsApp Web aberto no navegador com a mensagem para {phone_number}, Senhor!"
+            return f"WhatsApp Web aberto no navegador com a mensagem para '{contact_or_phone}', Senhor!"
         except Exception as e:
             return f"Erro ao abrir WhatsApp: {e}"
 
@@ -273,15 +310,30 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "send_whatsapp_message",
-            "description": "Envia uma mensagem no WhatsApp para um número de telefone.",
+            "name": "add_contact",
+            "description": "Adiciona/salva um novo contato com nome e telefone na agenda do Jarvis.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "phone_number": {"type": "string", "description": "Número do destinatário com DDD (ex: '5521999999999')"},
+                    "name": {"type": "string", "description": "Nome do contato (ex: 'Mãe', 'Pedro', 'Trabalho')"},
+                    "phone_number": {"type": "string", "description": "Número de telefone com DDD (ex: '5521999999999')"}
+                },
+                "required": ["name", "phone_number"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_whatsapp_message",
+            "description": "Envia mensagem no WhatsApp por nome de contato (ex: 'Mãe', 'Pedro') ou por número de telefone.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_or_phone": {"type": "string", "description": "Nome do contato (ex: 'Mãe') ou número de telefone com DDD"},
                     "message": {"type": "string", "description": "Texto da mensagem a ser enviada"}
                 },
-                "required": ["message"]
+                "required": ["contact_or_phone", "message"]
             }
         }
     },
@@ -406,7 +458,8 @@ TOOL_MAP = {
     "open_app": lambda kwargs: open_app(kwargs.get("app_name", "")),
     "open_url": lambda kwargs: open_url(kwargs.get("url", "")),
     "play_youtube": lambda kwargs: play_youtube(kwargs.get("query", "")),
-    "send_whatsapp_message": lambda kwargs: send_whatsapp_message(kwargs.get("phone_number", ""), kwargs.get("message", "")),
+    "add_contact": lambda kwargs: add_contact(kwargs.get("name", ""), kwargs.get("phone_number", "")),
+    "send_whatsapp_message": lambda kwargs: send_whatsapp_message(kwargs.get("contact_or_phone", ""), kwargs.get("message", "")),
     "list_tailscale_devices": lambda kwargs: list_tailscale_devices(),
     "run_remote_command": lambda kwargs: run_remote_command(kwargs.get("target", ""), kwargs.get("cmd", ""), kwargs.get("user", "rossini")),
     "fetch_remote_file": lambda kwargs: fetch_remote_file(kwargs.get("target", ""), kwargs.get("remote_file_path", ""), kwargs.get("local_destination", "/tmp/"), kwargs.get("user", "rossini")),
