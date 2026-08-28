@@ -130,9 +130,21 @@ def send_whatsapp_message(contact_or_phone: str = "", message: str = ""):
             return f"Mensagem enviada via WhatsApp para '{contact_or_phone}' pelo servidor, Senhor!"
     except Exception:
         try:
+            # Tentar focar em uma janela existente do WhatsApp antes de abrir nova
+            focused = False
+            for cmd in [["wmctrl", "-a", "WhatsApp"], ["xdotool", "search", "--name", "WhatsApp", "windowactivate"]]:
+                if shutil.which(cmd[0]):
+                    res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if res.returncode == 0:
+                        focused = True
+                        break
+                        
             msg_encoded = urllib.parse.quote(message)
             wa_url = f"https://web.whatsapp.com/send?phone={phone_clean}&text={msg_encoded}" if phone_clean else "https://web.whatsapp.com/"
             webbrowser.open(wa_url)
+            
+            if focused:
+                return f"Aba/Janela existente do WhatsApp focada com a mensagem para '{contact_or_phone}', Senhor!"
             return f"WhatsApp Web aberto no navegador com a mensagem para '{contact_or_phone}', Senhor!"
         except Exception as e:
             return f"Erro ao abrir WhatsApp: {e}"
