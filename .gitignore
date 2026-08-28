@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+jarvis_agent/venv/
+.env
+
+# Audio / Temp files
+/tmp/
+*.mp3
+*.wav
+
+# OS / IDE
+.DS_Store
+.vscode/

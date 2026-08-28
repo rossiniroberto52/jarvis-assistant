@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS - Interface de Comando</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Rajdhani:wght@500;600;700&display=swap');
+        
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background-color: #030712;
+            color: #00f0ff;
+        }
+        
+        .jarvis-font {
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        .glow-cyan {
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.35);
+        }
+        
+        .glow-border {
+            border: 1px solid rgba(0, 240, 255, 0.4);
+        }
+        
+        .arc-reactor {
+            animation: pulseArc 3s infinite ease-in-out;
+        }
+        
+        @keyframes pulseArc {
+            0%, 100% { transform: scale(1); filter: drop-shadow(0 0 15px rgba(0,240,255,0.6)); }
+            50% { transform: scale(1.05); filter: drop-shadow(0 0 30px rgba(0,240,255,0.9)); }
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #081226; }
+        ::-webkit-scrollbar-thumb { background: #00f0ff; border-radius: 3px; }
+
+        audio::-webkit-media-controls-panel {
+            background-color: #082f49;
+        }
+        audio::-webkit-media-controls-current-time-display,
+        audio::-webkit-media-controls-time-remaining-display {
+            color: #00f0ff;
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col justify-between p-4 md:p-8">
+
+    <!-- Header / HUD status -->
+    <header class="flex justify-between items-center border-b border-cyan-500/30 pb-4">
+        <div class="flex items-center space-x-4">
+            <div class="w-12 h-12 rounded-full border-2 border-cyan-400 flex items-center justify-center arc-reactor bg-cyan-950/40">
+                <i class="fa-solid fa-atom text-cyan-400 text-2xl"></i>
+            </div>
+            <div>
+                <h1 class="jarvis-font text-2xl font-extrabold tracking-widest text-cyan-300">J.A.R.V.I.S.</h1>
+                <p class="text-xs text-cyan-400/70 tracking-wider">SISTEMA INTELIGENTE DE COMANDO</p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-6 text-sm font-semibold">
+            <button id="wake-toggle" type="button" class="px-3 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 text-xs flex items-center space-x-2 transition-all cursor-pointer">
+                <span class="w-2 h-2 rounded-full bg-slate-500" id="wake-dot"></span>
+                <span id="wake-text">Modo Viva-Voz ("JARVIS")</span>
+            </button>
+            <div class="flex items-center space-x-2">
+                <span class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="text-emerald-400">ONLINE</span>
+            </div>
+            <div class="hidden sm:block text-cyan-400/80" id="model-badge">MODELO: QWEN 2.5 (GPU 7B / LOCAL AUTO)</div>
+        </div>
+    </header>
+
+    <!-- Chat Messages Container -->
+    <main id="chat-box" class="flex-1 my-4 overflow-y-auto p-4 space-y-4 rounded-xl bg-slate-950/60 glow-border backdrop-blur-md">
+        <!-- Default Welcome Message -->
+        <div class="flex items-start space-x-3">
+            <div class="w-8 h-8 rounded-full bg-cyan-900/60 border border-cyan-400 flex items-center justify-center text-xs font-bold">J</div>
+            <div class="max-w-2xl bg-cyan-950/40 border border-cyan-500/30 p-3.5 rounded-2xl rounded-tl-none text-cyan-100 text-base leading-relaxed">
+                Em que posso ser útil hoje, Senhor?
+            </div>
+        </div>
+    </main>
+
+    <!-- Input Bar & Voice Trigger -->
+    <footer class="mt-2">
+        <form id="chat-form" class="flex items-center space-x-3 bg-slate-900/80 p-2 rounded-2xl glow-border">
+            <button type="button" id="mic-btn" title="Falar pelo Microfone"
+                    class="w-12 h-12 rounded-xl bg-cyan-950 hover:bg-cyan-900 border border-cyan-400/50 flex items-center justify-center text-cyan-300 transition-all duration-200">
+                <i class="fa-solid fa-microphone text-lg" id="mic-icon"></i>
+            </button>
+
+            <input type="text" id="user-input" autocomplete="off" placeholder="Digite ou diga 'Jarvis <comando>'..."
+                   class="flex-1 bg-transparent px-4 py-3 text-cyan-100 placeholder-cyan-500/60 focus:outline-none text-lg">
+
+            <button type="submit" 
+                    class="px-6 py-3 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold jarvis-font rounded-xl transition-all shadow-lg glow-cyan flex items-center space-x-2">
+                <span>ENVIAR</span>
+                <i class="fa-solid fa-paper-plane text-xs"></i>
+            </button>
+        </form>
+    </footer>
+
+    <script>
+        const chatBox = document.getElementById('chat-box');
+        const chatForm = document.getElementById('chat-form');
+        const userInput = document.getElementById('user-input');
+        const micBtn = document.getElementById('mic-btn');
+        const micIcon = document.getElementById('mic-icon');
+        const wakeToggle = document.getElementById('wake-toggle');
+        const wakeDot = document.getElementById('wake-dot');
+        const wakeText = document.getElementById('wake-text');
+
+        let isWakeMode = false;
+        let continuousRecognition = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let currentAudioUrl = null;
+
+        function appendMessage(sender, text, isUser = false, source = null, audioUrl = null) {
+            const wrapper = document.createElement('div');
+            wrapper.className = `flex items-start space-x-3 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`;
+
+            const avatar = document.createElement('div');
+            avatar.className = `w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isUser ? 'bg-cyan-500 text-slate-950' : 'bg-cyan-900/60 border border-cyan-400 text-cyan-300'}`;
+            avatar.innerText = isUser ? 'SR' : 'J';
+
+            const bubble = document.createElement('div');
+            bubble.className = `max-w-2xl p-3.5 rounded-2xl text-base leading-relaxed ${isUser ? 'bg-cyan-600/30 border border-cyan-400/50 text-white rounded-tr-none' : 'bg-cyan-950/40 border border-cyan-500/30 text-cyan-100 rounded-tl-none'}`;
+            
+            let html = '';
+            if (source && !isUser) {
+                html += `<div class="text-[10px] uppercase font-bold tracking-widest text-cyan-400/70 mb-1">⚡ ${source}</div>`;
+            }
+            if (audioUrl) {
+                html += `<div class="mb-2"><audio controls class="h-9 w-64 rounded-lg" src="${audioUrl}"></audio></div>`;
+            }
+            html += `<div>${text}</div>`;
+            bubble.innerHTML = html;
+
+            wrapper.appendChild(avatar);
+            wrapper.appendChild(bubble);
+            chatBox.appendChild(wrapper);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const text = userInput.value.trim();
+            if (!text) return;
+
+            const sendAudioUrl = currentAudioUrl;
+            currentAudioUrl = null;
+
+            appendMessage('Você', text, true, null, sendAudioUrl);
+            userInput.value = '';
+
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                const data = await res.json();
+                if (data.reply) {
+                    if (data.source) {
+                        document.getElementById('model-badge').innerText = `MODELO: ${data.source.toUpperCase()}`;
+                    }
+                    // Adiciona link para o áudio de resposta do Jarvis
+                    const responseAudioUrl = `/api/audio?t=${Date.now()}`;
+                    appendMessage('JARVIS', data.reply, false, data.source, responseAudioUrl);
+                } else if (data.error) {
+                    appendMessage('JARVIS', `[Erro]: ${data.error}`);
+                }
+            } catch (err) {
+                appendMessage('JARVIS', `[Erro de conexão]: ${err.message}`);
+            }
+        });
+
+        // Configuração de gravação de áudio do microfone para gerar player no chat
+        async function startAudioRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) audioChunks.push(event.data);
+                };
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    currentAudioUrl = URL.createObjectURL(audioBlob);
+                };
+                mediaRecorder.start();
+            } catch(e) {
+                console.error("Erro ao gravar áudio:", e);
+            }
+        }
+
+        function stopAudioRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            }
+        }
+
+        // Web Speech API
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (SpeechRecognition) {
+            const singleRec = new SpeechRecognition();
+            singleRec.lang = 'pt-BR';
+            singleRec.continuous = false;
+
+            micBtn.addEventListener('click', () => {
+                try {
+                    startAudioRecording();
+                    singleRec.start();
+                    micIcon.className = 'fa-solid fa-microphone-lines text-red-400 animate-bounce';
+                } catch(e) {
+                    console.error("Erro mic avulso:", e);
+                }
+            });
+
+            singleRec.onresult = (event) => {
+                stopAudioRecording();
+                userInput.value = event.results[0][0].transcript;
+                micIcon.className = 'fa-solid fa-microphone text-cyan-300';
+                setTimeout(() => chatForm.dispatchEvent(new Event('submit')), 200);
+            };
+
+            singleRec.onerror = singleRec.onend = () => {
+                stopAudioRecording();
+                micIcon.className = 'fa-solid fa-microphone text-cyan-300';
+            };
+
+            // Modo Viva-Voz
+            continuousRecognition = new SpeechRecognition();
+            continuousRecognition.lang = 'pt-BR';
+            continuousRecognition.continuous = true;
+            continuousRecognition.interimResults = false;
+
+            continuousRecognition.onresult = (event) => {
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        const spoken = event.results[i][0].transcript.trim();
+                        const lower = spoken.toLowerCase();
+                        
+                        if (lower.includes('jarvis')) {
+                            let cmd = lower.split('jarvis').pop().trim();
+                            if (!cmd) cmd = spoken;
+                            userInput.value = cmd;
+                            chatForm.dispatchEvent(new Event('submit'));
+                        }
+                    }
+                }
+            };
+
+            continuousRecognition.onend = () => {
+                if (isWakeMode) {
+                    setTimeout(() => {
+                        try { continuousRecognition.start(); } catch(e) {}
+                    }, 300);
+                }
+            };
+
+            wakeToggle.addEventListener('click', async () => {
+                isWakeMode = !isWakeMode;
+                if (isWakeMode) {
+                    try {
+                        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                            await navigator.mediaDevices.getUserMedia({ audio: true });
+                        }
+                        continuousRecognition.start();
+                        wakeDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+                        wakeToggle.className = 'px-3 py-1.5 rounded-lg border border-emerald-500/80 bg-emerald-950 text-emerald-300 text-xs flex items-center space-x-2 transition-all glow-cyan';
+                        wakeText.innerText = 'Viva-Voz Ativo ("JARVIS")';
+                    } catch (err) {
+                        alert("Por favor, permita o acesso ao microfone no seu navegador.");
+                        isWakeMode = false;
+                    }
+                } else {
+                    wakeDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
+                    wakeToggle.className = 'px-3 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 text-xs flex items-center space-x-2 transition-all';
+                    wakeText.innerText = 'Modo Viva-Voz ("JARVIS")';
+                    try { continuousRecognition.stop(); } catch(e) {}
+                }
+            });
+        }
+    </script>
+</body>
+</html>
