@@ -5,10 +5,12 @@ import subprocess
 import urllib.request
 import urllib.parse
 import json
+import re
 import psutil
 import imaplib
 import smtplib
 import email
+import webbrowser
 from email.header import decode_header
 from email.mime.text import MIMEText
 from gmail_config import GMAIL_USER, GMAIL_APP_PASSWORD
@@ -26,8 +28,62 @@ def get_system_info():
     ram_str = f"{ram.used // (1024**2)}MB / {ram.total // (1024**2)}MB"
     return f"OS: {platform.system()} {platform.release()} | CPU: {cpu} | RAM: {ram_str}"
 
+def open_app(app_name: str):
+    """Abre um aplicativo localmente no computador do usuário (ex: 'firefox', 'code', 'alacritty', 'vlc')."""
+    app_lower = app_name.strip().lower()
+    
+    app_map = {
+        "firefox": "firefox",
+        "navegador": "firefox",
+        "browser": "firefox",
+        "code": "code",
+        "vscode": "code",
+        "editor": "code",
+        "terminal": "alacritty",
+        "alacritty": "alacritty",
+        "vlc": "vlc",
+        "arquivos": "thunar",
+        "gerenciador de arquivos": "thunar"
+    }
+    
+    executable = app_map.get(app_lower, app_lower)
+    
+    try:
+        subprocess.Popen([executable], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return f"Aplicativo '{executable}' aberto com sucesso no seu computador local, Senhor!"
+    except Exception as e:
+        return f"Erro ao tentar abrir '{executable}': {e}"
+
+def open_url(url: str):
+    """Abre uma página web ou URL diretamente no navegador local do computador do usuário."""
+    try:
+        webbrowser.open(url)
+        return f"Página '{url}' aberta com sucesso no navegador local, Senhor!"
+    except Exception as e:
+        return f"Erro ao abrir URL: {e}"
+
+def play_youtube(query: str):
+    """Pesquisa e toca o primeiro vídeo/música correspondente diretamente no YouTube."""
+    try:
+        query_encoded = urllib.parse.quote(query)
+        search_url = f"https://www.youtube.com/results?search_query={query_encoded}"
+        req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"})
+        
+        target_url = search_url
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            html = resp.read().decode("utf-8")
+            video_ids = re.findall(r"watch\?v=([a-zA-Z0-9_-]{11})", html)
+            if video_ids:
+                target_url = f"https://www.youtube.com/watch?v={video_ids[0]}"
+                
+        webbrowser.open(target_url)
+        return f"Reproduzindo o vídeo '{query}' no YouTube, Senhor!"
+    except Exception as e:
+        webbrowser.open(f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}")
+        return f"Pesquisa de '{query}' aberta no YouTube, Senhor!"
+
 def run_command(cmd: str):
-    """Executa um comando no terminal e retorna a saída."""
+    """Executa um comando no terminal local e retorna a saída."""
     try:
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
         out = res.stdout or res.stderr
@@ -156,6 +212,48 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "open_app",
+            "description": "Abre um programa ou aplicativo localmente no computador do usuário (ex: 'firefox', 'code', 'terminal', 'vlc').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "app_name": {"type": "string", "description": "Nome do programa para abrir (ex: 'firefox', 'code')"}
+                },
+                "required": ["app_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_url",
+            "description": "Abre uma URL ou site no navegador local do computador.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL completa do site para abrir (ex: 'https://google.com')"}
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "play_youtube",
+            "description": "Busca e toca o primeiro vídeo/música correspondente diretamente no YouTube.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Nome da música, artista ou vídeo para tocar no YouTube"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_tailscale_devices",
             "description": "Lista os dispositivos, IPs e status de toda a sua rede privada Tailscale.",
             "parameters": {"type": "object", "properties": {}, "required": []}
@@ -165,11 +263,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "run_remote_command",
-            "description": "Executa um comando remoto via SSH em outro dispositivo da rede Tailscale (ex: servidor Ubuntu ou PC secundário).",
+            "description": "Executa um comando remoto via SSH em outro dispositivo da rede Tailscale.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target": {"type": "string", "description": "IP Tailscale ou nome do dispositivo alvo (ex: '100.120.161.101' ou 'ejuicap-server')"},
+                    "target": {"type": "string", "description": "IP Tailscale ou nome do dispositivo alvo"},
                     "cmd": {"type": "string", "description": "Comando bash a ser executado remotamente"},
                     "user": {"type": "string", "description": "Usuário SSH (padrão 'rossini')"}
                 },
@@ -186,7 +284,7 @@ TOOLS_SCHEMA = [
                 "type": "object",
                 "properties": {
                     "target": {"type": "string", "description": "IP ou hostname do dispositivo remoto"},
-                    "remote_file_path": {"type": "string", "description": "Caminho completo do arquivo remoto (ex: '/home/rossini/relatorio.pdf')"},
+                    "remote_file_path": {"type": "string", "description": "Caminho completo do arquivo remoto"},
                     "local_destination": {"type": "string", "description": "Pasta de destino local (padrão '/tmp/')"},
                     "user": {"type": "string", "description": "Usuário SSH (padrão 'rossini')"}
                 },
@@ -271,6 +369,9 @@ TOOLS_SCHEMA = [
 TOOL_MAP = {
     "get_time": lambda kwargs: get_time(),
     "get_system_info": lambda kwargs: get_system_info(),
+    "open_app": lambda kwargs: open_app(kwargs.get("app_name", "")),
+    "open_url": lambda kwargs: open_url(kwargs.get("url", "")),
+    "play_youtube": lambda kwargs: play_youtube(kwargs.get("query", "")),
     "list_tailscale_devices": lambda kwargs: list_tailscale_devices(),
     "run_remote_command": lambda kwargs: run_remote_command(kwargs.get("target", ""), kwargs.get("cmd", ""), kwargs.get("user", "rossini")),
     "fetch_remote_file": lambda kwargs: fetch_remote_file(kwargs.get("target", ""), kwargs.get("remote_file_path", ""), kwargs.get("local_destination", "/tmp/"), kwargs.get("user", "rossini")),
