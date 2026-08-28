@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 jarvis_agent/venv/
+jarvis_agent/gmail_local.py
 .env
 
 # Audio / Temp files
