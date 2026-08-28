@@ -41,7 +41,7 @@ def call_ollama(msgs):
     
     try:
         req = urllib.request.Request(target_url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             res_json = json.loads(resp.read().decode("utf-8"))
             return res_json.get("message", {}), f"Servidor GPU ({SERVER_MODEL})"
     except Exception:
@@ -50,7 +50,7 @@ def call_ollama(msgs):
             payload["model"] = LOCAL_MODEL
             data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(LOCAL_OLLAMA_URL, data=data, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=45) as resp:
                 res_json = json.loads(resp.read().decode("utf-8"))
                 return res_json.get("message", {}), f"Local CPU ({LOCAL_MODEL})"
         except Exception as e:
