@@ -132,21 +132,22 @@ def get_weather(city: str = ""):
     except Exception as e:
         return f"Erro ao buscar previsão do tempo: {e}"
 
-def send_email(to_email: str, subject: str, body: str):
+def send_email(to_email: str = "", subject: str = "Mensagem do Jarvis", body: str = ""):
     """Envia um e-mail usando a conta do Gmail cadastrada."""
+    target_email = to_email.strip() if to_email and to_email.strip() else GMAIL_USER
     if GMAIL_USER == "seu_email@gmail.com" or not GMAIL_APP_PASSWORD:
         return "Erro: Credenciais do Gmail não configuradas no arquivo gmail_config.py."
     try:
         msg = MIMEText(body, "plain", "utf-8")
         msg["Subject"] = subject
         msg["From"] = GMAIL_USER
-        msg["To"] = to_email
+        msg["To"] = target_email
 
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-            server.sendmail(GMAIL_USER, [to_email], msg.as_string())
-        return f"E-mail enviado com sucesso para {to_email}!"
+            server.sendmail(GMAIL_USER, [target_email], msg.as_string())
+        return f"E-mail enviado com sucesso para {target_email}!"
     except Exception as e:
         return f"Erro ao enviar e-mail: {e}"
 
@@ -324,15 +325,15 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "send_email",
-            "description": "Envia um e-mail para um destinatário.",
+            "description": "Envia um e-mail para um destinatário (se não especificado destinatário, envia para o próprio e-mail do usuário).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "to_email": {"type": "string", "description": "E-mail do destinatário"},
+                    "to_email": {"type": "string", "description": "E-mail do destinatário (opcional, padrão e-mail do Senhor)"},
                     "subject": {"type": "string", "description": "Assunto do e-mail"},
                     "body": {"type": "string", "description": "Conteúdo do e-mail"}
                 },
-                "required": ["to_email", "subject", "body"]
+                "required": ["body"]
             }
         }
     },
