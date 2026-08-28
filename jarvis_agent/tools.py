@@ -82,6 +82,24 @@ def play_youtube(query: str):
         webbrowser.open(f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}")
         return f"Pesquisa de '{query}' aberta no YouTube, Senhor!"
 
+def send_whatsapp_message(phone_number: str = "", message: str = ""):
+    """Envia uma mensagem de WhatsApp usando o n8n no servidor ou abrindo o WhatsApp Web."""
+    try:
+        url = f"{N8N_SERVER_URL}/webhook/whatsapp"
+        payload = json.dumps({"phone": phone_number, "message": message}).encode('utf-8')
+        req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return f"Mensagem enviada via WhatsApp para {phone_number} pelo servidor, Senhor!"
+    except Exception:
+        try:
+            phone_clean = re.sub(r'\D', '', phone_number)
+            msg_encoded = urllib.parse.quote(message)
+            wa_url = f"https://web.whatsapp.com/send?phone={phone_clean}&text={msg_encoded}" if phone_clean else "https://web.whatsapp.com/"
+            webbrowser.open(wa_url)
+            return f"WhatsApp Web aberto no navegador com a mensagem para {phone_number}, Senhor!"
+        except Exception as e:
+            return f"Erro ao abrir WhatsApp: {e}"
+
 def run_command(cmd: str):
     """Executa um comando no terminal local e retorna a saída."""
     try:
@@ -255,6 +273,21 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "send_whatsapp_message",
+            "description": "Envia uma mensagem no WhatsApp para um número de telefone.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "phone_number": {"type": "string", "description": "Número do destinatário com DDD (ex: '5521999999999')"},
+                    "message": {"type": "string", "description": "Texto da mensagem a ser enviada"}
+                },
+                "required": ["message"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_tailscale_devices",
             "description": "Lista os dispositivos, IPs e status de toda a sua rede privada Tailscale.",
             "parameters": {"type": "object", "properties": {}, "required": []}
@@ -373,6 +406,7 @@ TOOL_MAP = {
     "open_app": lambda kwargs: open_app(kwargs.get("app_name", "")),
     "open_url": lambda kwargs: open_url(kwargs.get("url", "")),
     "play_youtube": lambda kwargs: play_youtube(kwargs.get("query", "")),
+    "send_whatsapp_message": lambda kwargs: send_whatsapp_message(kwargs.get("phone_number", ""), kwargs.get("message", "")),
     "list_tailscale_devices": lambda kwargs: list_tailscale_devices(),
     "run_remote_command": lambda kwargs: run_remote_command(kwargs.get("target", ""), kwargs.get("cmd", ""), kwargs.get("user", "rossini")),
     "fetch_remote_file": lambda kwargs: fetch_remote_file(kwargs.get("target", ""), kwargs.get("remote_file_path", ""), kwargs.get("local_destination", "/tmp/"), kwargs.get("user", "rossini")),
