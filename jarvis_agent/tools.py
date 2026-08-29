@@ -2,6 +2,7 @@ import datetime
 import os
 import platform
 import subprocess
+import shutil
 import urllib.request
 import urllib.parse
 import json
@@ -105,8 +106,9 @@ def add_contact(name: str, phone_number: str):
         return f"Erro ao salvar contato: {e}"
 
 def send_whatsapp_message(contact_or_phone: str = "", message: str = ""):
-    """Envia mensagem no WhatsApp resolvendo pelo nome do contato (ex: 'Mãe', 'Pedro') ou número de telefone."""
+    """Envia mensagem no WhatsApp por nome de contato (ex: 'Mãe', 'Pedro') ou por número de telefone."""
     target = contact_or_phone.strip()
+    msg_text = message.strip() if message and message.strip() else "Olá! Esta é uma mensagem do assistente Jarvis."
     
     # Tenta buscar número pelo nome no contacts.json
     contacts_file = os.path.join(os.path.dirname(__file__), "contacts.json")
@@ -122,15 +124,17 @@ def send_whatsapp_message(contact_or_phone: str = "", message: str = ""):
             pass
             
     phone_clean = re.sub(r'\D', '', target)
+    if phone_clean and not phone_clean.startswith("55") and len(phone_clean) in [10, 11]:
+        phone_clean = "55" + phone_clean
+
     try:
         url = f"{N8N_SERVER_URL}/webhook/whatsapp"
-        payload = json.dumps({"phone": phone_clean or target, "message": message}).encode('utf-8')
+        payload = json.dumps({"phone": phone_clean or target, "message": msg_text}).encode('utf-8')
         req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return f"Mensagem enviada via WhatsApp para '{contact_or_phone}' pelo servidor, Senhor!"
+            return f"Mensagem enviada com sucesso via WhatsApp para {target} pelo servidor, Senhor!"
     except Exception:
         try:
-            # Tentar focar em uma janela existente do WhatsApp antes de abrir nova
             focused = False
             for cmd in [["wmctrl", "-a", "WhatsApp"], ["xdotool", "search", "--name", "WhatsApp", "windowactivate"]]:
                 if shutil.which(cmd[0]):
@@ -139,13 +143,11 @@ def send_whatsapp_message(contact_or_phone: str = "", message: str = ""):
                         focused = True
                         break
                         
-            msg_encoded = urllib.parse.quote(message)
+            msg_encoded = urllib.parse.quote(msg_text)
             wa_url = f"https://web.whatsapp.com/send?phone={phone_clean}&text={msg_encoded}" if phone_clean else "https://web.whatsapp.com/"
             webbrowser.open(wa_url)
             
-            if focused:
-                return f"Aba/Janela existente do WhatsApp focada com a mensagem para '{contact_or_phone}', Senhor!"
-            return f"WhatsApp Web aberto no navegador com a mensagem para '{contact_or_phone}', Senhor!"
+            return f"Sucesso: WhatsApp aberto para o número {phone_clean or target} com a mensagem '{msg_text}', Senhor!"
         except Exception as e:
             return f"Erro ao abrir WhatsApp: {e}"
 
