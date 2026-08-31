@@ -1,4 +1,14 @@
 {
-    "exemplo": "5521999999999",
-    "Pedro": "5521988888888"
+    "exemplo": {
+        "number": "5521999999999",
+        "important": false
+    },
+    "Pedro": {
+        "number": "5581999998888",
+        "important": true
+    },
+    "Nina Mial": {
+        "number": "558199171937",
+        "important": false
+    }
 }

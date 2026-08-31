@@ -19,8 +19,13 @@ from gmail_config import GMAIL_USER, GMAIL_APP_PASSWORD
 N8N_SERVER_URL = "http://100.120.161.101:5678"
 
 def get_time():
-    """Retorna a data e hora atuais."""
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """Retorna a data e hora atuais exatas do sistema do Senhor."""
+    now = datetime.datetime.now()
+    dias = ['segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado', 'domingo']
+    meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+    dia_semana = dias[now.weekday()]
+    mes = meses[now.month - 1]
+    return f"{dia_semana}, {now.day} de {mes} de {now.year}, às {now.strftime('%H:%M:%S')}."
 
 def get_system_info():
     """Retorna informações básicas de sistema (CPU, RAM, OS)."""
@@ -58,7 +63,7 @@ def open_app(app_name: str):
 def open_url(url: str):
     """Abre uma página web ou URL diretamente no navegador local do computador do usuário."""
     try:
-        webbrowser.open(url)
+        webbrowser.open(url, new=0, autoraise=True)
         return f"Página '{url}' aberta com sucesso no navegador local, Senhor!"
     except Exception as e:
         return f"Erro ao abrir URL: {e}"
@@ -83,25 +88,92 @@ def play_youtube(query: str):
         webbrowser.open(f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}")
         return f"Pesquisa de '{query}' aberta no YouTube, Senhor!"
 
-def add_contact(name: str, phone_number: str):
+
+def load_contacts():
+    contacts_file = os.path.join(os.path.dirname(__file__), "contacts.json")
+    if os.path.exists(contacts_file):
+        try:
+            with open(contacts_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                normalized = {}
+                for k, v in data.items():
+                    if isinstance(v, str):
+                        normalized[k] = {"number": v, "important": False}
+                    elif isinstance(v, dict):
+                        normalized[k] = {"number": v.get("number", ""), "important": bool(v.get("important", False))}
+                return normalized
+        except Exception:
+            return {}
+    return {}
+
+def save_contacts(contacts_data):
+    contacts_file = os.path.join(os.path.dirname(__file__), "contacts.json")
+    with open(contacts_file, "w", encoding="utf-8") as f:
+        json.dump(contacts_data, f, ensure_ascii=False, indent=4)
+
+def mark_contact_important(name: str, is_important: bool = True):
+    """Marca ou desmarca um contato da agenda como VIP/Importante."""
+    contacts = load_contacts()
+    target_key = None
+    for k in contacts:
+        if k.lower() == name.strip().lower() or name.strip().lower() in k.lower():
+            target_key = k
+            break
+            
+    if not target_key:
+        return f"Contato '{name}' não encontrado na sua agenda, Senhor."
+        
+    contacts[target_key]["important"] = is_important
+    save_contacts(contacts)
+    status = "IMPORTANTE/VIP" if is_important else "comum"
+    return f"O contato '{target_key}' foi atualizado como {status}, Senhor!"
+
+_LAST_WHATSAPP_OPEN = 0
+
+def check_whatsapp_messages(only_important: bool = True):
+    """Verifica as mensagens do WhatsApp Web, focando nos contatos importantes sem duplicar abas."""
+    global _LAST_WHATSAPP_OPEN
+    import time
+
+    contacts = load_contacts()
+    important_list = [k for k, v in contacts.items() if v.get("important")]
+
+    if only_important and not important_list:
+        return "Senhor, nenhum contato foi marcado como importante ainda. Diga 'Marcar Pedro como importante' para definir contatos VIP."
+
+    names_str = ", ".join(important_list) if important_list else "todos os contatos"
+    now = time.time()
+
+    # Otimização: Se a aba foi aberta há menos de 3 minutos, evita abrir nova aba e demorar no download
+    if now - _LAST_WHATSAPP_OPEN < 180:
+        return f"A sua aba do WhatsApp Web já está aberta e ativa no navegador, Senhor! Monitorando contatos VIP: {names_str}."
+
+    try:
+        if important_list:
+            num = contacts[important_list[0]]["number"]
+            url = f"https://web.whatsapp.com/send?phone={num}"
+        else:
+            url = "https://web.whatsapp.com/"
+
+        webbrowser.open(url, new=0, autoraise=True)
+        _LAST_WHATSAPP_OPEN = now
+        return f"Aba do WhatsApp Web acionada para os contatos prioritários: {names_str}, Senhor!"
+    except Exception as e:
+        return f"Erro ao abrir WhatsApp: {e}"
+
+def add_contact(name: str, phone_number: str, is_important: bool = False):
     """Salva/adiciona um novo contato de agenda no arquivo contacts.json do Jarvis."""
     try:
-        contacts_file = os.path.join(os.path.dirname(__file__), "contacts.json")
-        contacts = {}
-        if os.path.exists(contacts_file):
-            try:
-                with open(contacts_file, "r", encoding="utf-8") as f:
-                    contacts = json.load(f)
-            except Exception:
-                contacts = {}
-                
-        phone_clean = re.sub(r'\D', '', phone_number)
-        contacts[name.strip()] = phone_clean or phone_number.strip()
-        
-        with open(contacts_file, "w", encoding="utf-8") as f:
-            json.dump(contacts, f, ensure_ascii=False, indent=4)
-            
-        return f"Contato '{name.strip()}' com número '{phone_clean}' salvo com sucesso na sua agenda, Senhor!"
+        contacts = load_contacts()
+        phone_clean = re.sub(r"\D", "", phone_number)
+        name_clean = name.strip()
+        contacts[name_clean] = {
+            "number": phone_clean or phone_number.strip(),
+            "important": is_important
+        }
+        save_contacts(contacts)
+        tag = "marcado como IMPORTANTE/VIP" if is_important else "salvo na sua agenda"
+        return f"Contato '{name_clean}' ({phone_clean}) {tag} com sucesso, Senhor!"
     except Exception as e:
         return f"Erro ao salvar contato: {e}"
 
@@ -464,22 +536,52 @@ TOOLS_SCHEMA = [
             }
         }
     }
-]
+,
+    {
+        "type": "function",
+        "function": {
+            "name": "mark_contact_important",
+            "description": "Marca ou desmarca um contato da agenda como VIP / Importante para monitoramento de mensagens.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Nome do contato (ex: Pedro, Mãe)"},
+                    "is_important": {"type": "boolean", "description": "True para marcar como importante/VIP, False para desmarcar"}
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_whatsapp_messages",
+            "description": "Verifica se há mensagens recebidas do WhatsApp, focando nos contatos marcados como importantes/VIP.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "only_important": {"type": "boolean", "description": "Filtrar apenas mensagens de contatos VIP/importantes (padrão true)"}
+                }
+            }
+        }
+    }]
 
 TOOL_MAP = {
-    "get_time": lambda kwargs: get_time(),
-    "get_system_info": lambda kwargs: get_system_info(),
-    "open_app": lambda kwargs: open_app(kwargs.get("app_name", "")),
-    "open_url": lambda kwargs: open_url(kwargs.get("url", "")),
-    "play_youtube": lambda kwargs: play_youtube(kwargs.get("query", "")),
-    "add_contact": lambda kwargs: add_contact(kwargs.get("name", ""), kwargs.get("phone_number", "")),
-    "send_whatsapp_message": lambda kwargs: send_whatsapp_message(kwargs.get("contact_or_phone", ""), kwargs.get("message", "")),
-    "list_tailscale_devices": lambda kwargs: list_tailscale_devices(),
-    "run_remote_command": lambda kwargs: run_remote_command(kwargs.get("target", ""), kwargs.get("cmd", ""), kwargs.get("user", "rossini")),
-    "fetch_remote_file": lambda kwargs: fetch_remote_file(kwargs.get("target", ""), kwargs.get("remote_file_path", ""), kwargs.get("local_destination", "/tmp/"), kwargs.get("user", "rossini")),
-    "get_weather": lambda kwargs: get_weather(kwargs.get("city", "")),
-    "read_latest_emails": lambda kwargs: read_latest_emails(kwargs.get("limit", 3)),
-    "send_email": lambda kwargs: send_email(kwargs.get("to_email", ""), kwargs.get("subject", ""), kwargs.get("body", "")),
-    "run_command": lambda kwargs: run_command(kwargs.get("cmd", "")),
-    "trigger_n8n_workflow": lambda kwargs: trigger_n8n_workflow(kwargs.get("path", ""))
+    "get_time": lambda **kwargs: get_time(),
+    "get_system_info": lambda **kwargs: get_system_info(),
+    "open_app": lambda **kwargs: open_app(kwargs.get("app_name", "")),
+    "open_url": lambda **kwargs: open_url(kwargs.get("url", "")),
+    "play_youtube": lambda **kwargs: play_youtube(kwargs.get("query", "")),
+    "add_contact": lambda **kwargs: add_contact(kwargs.get("name", ""), kwargs.get("phone_number", "")),
+    "send_whatsapp_message": lambda **kwargs: send_whatsapp_message(kwargs.get("contact_or_phone", ""), kwargs.get("message", "")),
+    "list_tailscale_devices": lambda **kwargs: list_tailscale_devices(),
+    "run_remote_command": lambda **kwargs: run_remote_command(kwargs.get("target", ""), kwargs.get("cmd", ""), kwargs.get("user", "rossini")),
+    "fetch_remote_file": lambda **kwargs: fetch_remote_file(kwargs.get("target", ""), kwargs.get("remote_file_path", ""), kwargs.get("local_destination", "/tmp/"), kwargs.get("user", "rossini")),
+    "get_weather": lambda **kwargs: get_weather(kwargs.get("city", "")),
+    "read_latest_emails": lambda **kwargs: read_latest_emails(int(kwargs.get("limit", 3))),
+    "send_email": lambda **kwargs: send_email(kwargs.get("to_email", ""), kwargs.get("subject", ""), kwargs.get("body", "")),
+    "run_command": lambda **kwargs: run_command(kwargs.get("cmd", "")),
+    "trigger_n8n_workflow": lambda **kwargs: trigger_n8n_workflow(kwargs.get("path", "")),
+    "mark_contact_important": lambda **kwargs: mark_contact_important(kwargs.get("name", ""), kwargs.get("is_important", True)),
+    "check_whatsapp_messages": lambda **kwargs: check_whatsapp_messages(kwargs.get("only_important", True))
 }

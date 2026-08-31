@@ -8,13 +8,13 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Rajdhani:wght@500;600;700&display=swap');
-        
+
         body {
             font-family: 'Rajdhani', sans-serif;
             background-color: #030712;
             color: #00f0ff;
         }
-        
+
         .jarvis-font {
             font-family: 'Orbitron', sans-serif;
         }
@@ -22,18 +22,18 @@
         .glow-cyan {
             box-shadow: 0 0 20px rgba(0, 240, 255, 0.35);
         }
-        
+
         .glow-border {
             border: 1px solid rgba(0, 240, 255, 0.4);
         }
-        
+
         .arc-reactor {
-            animation: pulseArc 3s infinite ease-in-out;
+            animation: pulseArc 2.5s infinite ease-in-out;
         }
-        
+
         @keyframes pulseArc {
             0%, 100% { transform: scale(1); filter: drop-shadow(0 0 15px rgba(0,240,255,0.6)); }
-            50% { transform: scale(1.05); filter: drop-shadow(0 0 30px rgba(0,240,255,0.9)); }
+            50% { transform: scale(1.08); filter: drop-shadow(0 0 30px rgba(0,240,255,0.95)); }
         }
 
         /* Custom Scrollbar */
@@ -64,10 +64,17 @@
             </div>
         </div>
         <div class="flex items-center space-x-6 text-sm font-semibold">
+            <!-- HUD Clock Widget -->
+            <div class="flex items-center space-x-2 border-r border-cyan-500/30 pr-4">
+                <i class="fa-regular fa-clock text-cyan-400 text-sm animate-pulse"></i>
+                <span id="hud-clock" class="jarvis-font text-cyan-300 font-bold text-sm tracking-wider">--:--:--</span>
+            </div>
+
             <button id="wake-toggle" type="button" class="px-3 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 text-xs flex items-center space-x-2 transition-all cursor-pointer">
                 <span class="w-2 h-2 rounded-full bg-slate-500" id="wake-dot"></span>
                 <span id="wake-text">Modo Viva-Voz ("JARVIS")</span>
             </button>
+
             <div class="flex items-center space-x-2">
                 <span class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></span>
                 <span class="text-emerald-400">ONLINE</span>
@@ -76,8 +83,8 @@
         </div>
     </header>
 
-    <!-- Chat Messages Container -->
-    <main id="chat-box" class="flex-1 my-4 overflow-y-auto p-4 space-y-4 rounded-xl bg-slate-950/60 glow-border backdrop-blur-md">
+    <!-- Chat Console -->
+    <main id="chat-box" class="flex-1 overflow-y-auto my-4 space-y-4 pr-2">
         <!-- Default Welcome Message -->
         <div class="flex items-start space-x-3">
             <div class="w-8 h-8 rounded-full bg-cyan-900/60 border border-cyan-400 flex items-center justify-center text-xs font-bold">J</div>
@@ -98,7 +105,7 @@
             <input type="text" id="user-input" autocomplete="off" placeholder="Digite ou diga 'Jarvis <comando>'..."
                    class="flex-1 bg-transparent px-4 py-3 text-cyan-100 placeholder-cyan-500/60 focus:outline-none text-lg">
 
-            <button type="submit" 
+            <button type="submit" id="send-btn"
                     class="px-6 py-3 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold jarvis-font rounded-xl transition-all shadow-lg glow-cyan flex items-center space-x-2">
                 <span>ENVIAR</span>
                 <i class="fa-solid fa-paper-plane text-xs"></i>
@@ -110,11 +117,13 @@
         const chatBox = document.getElementById('chat-box');
         const chatForm = document.getElementById('chat-form');
         const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
         const micBtn = document.getElementById('mic-btn');
         const micIcon = document.getElementById('mic-icon');
         const wakeToggle = document.getElementById('wake-toggle');
         const wakeDot = document.getElementById('wake-dot');
         const wakeText = document.getElementById('wake-text');
+        const hudClock = document.getElementById('hud-clock');
 
         let isWakeMode = false;
         let continuousRecognition = null;
@@ -122,23 +131,39 @@
         let audioChunks = [];
         let currentAudioUrl = null;
 
+        // Atualização em Tempo Real do Relógio Digital na HUD Web
+        function updateHUDClock() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('pt-BR');
+            const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' });
+            hudClock.innerText = `${dateStr.toUpperCase()} ${timeStr}`;
+        }
+        setInterval(updateHUDClock, 1000);
+        updateHUDClock();
+
         function appendMessage(sender, text, isUser = false, source = null, audioUrl = null) {
             const wrapper = document.createElement('div');
             wrapper.className = `flex items-start space-x-3 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`;
 
             const avatar = document.createElement('div');
-            avatar.className = `w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${isUser ? 'bg-cyan-500 text-slate-950' : 'bg-cyan-900/60 border border-cyan-400 text-cyan-300'}`;
+            avatar.className = `w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                isUser ? 'bg-cyan-600 text-slate-950 font-extrabold' : 'bg-cyan-900/60 border border-cyan-400 text-cyan-300'
+            }`;
             avatar.innerText = isUser ? 'SR' : 'J';
 
             const bubble = document.createElement('div');
-            bubble.className = `max-w-2xl p-3.5 rounded-2xl text-base leading-relaxed ${isUser ? 'bg-cyan-600/30 border border-cyan-400/50 text-white rounded-tr-none' : 'bg-cyan-950/40 border border-cyan-500/30 text-cyan-100 rounded-tl-none'}`;
-            
+            bubble.className = `max-w-2xl p-3.5 rounded-2xl text-base leading-relaxed ${
+                isUser
+                    ? 'bg-cyan-600/20 border border-cyan-400/40 rounded-tr-none text-cyan-100'
+                    : 'bg-cyan-950/40 border border-cyan-500/30 rounded-tl-none text-cyan-100'
+            }`;
+
             let html = '';
-            if (source && !isUser) {
-                html += `<div class="text-[10px] uppercase font-bold tracking-widest text-cyan-400/70 mb-1">⚡ ${source}</div>`;
+            if (!isUser && source) {
+                html += `<div class="text-[10px] tracking-wider font-semibold text-cyan-400/70 uppercase mb-1">ORIGEM: ${source}</div>`;
             }
             if (audioUrl) {
-                html += `<div class="mb-2"><audio controls class="h-9 w-64 rounded-lg" src="${audioUrl}"></audio></div>`;
+                html += `<div class="mb-2"><audio controls autoplay class="h-9 w-64 rounded-lg" src="${audioUrl}"></audio></div>`;
             }
             html += `<div>${text}</div>`;
             bubble.innerHTML = html;
@@ -147,6 +172,29 @@
             wrapper.appendChild(bubble);
             chatBox.appendChild(wrapper);
             chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // Animação Futurista de Processamento (Thinking)
+        function showThinkingIndicator() {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'thinking-indicator';
+            wrapper.className = 'flex items-start space-x-3';
+            wrapper.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-cyan-900/60 border border-cyan-400 flex items-center justify-center text-xs font-bold shrink-0 arc-reactor">
+                    <i class="fa-solid fa-brain text-cyan-300 animate-pulse"></i>
+                </div>
+                <div class="bg-cyan-950/40 border border-cyan-500/30 p-3.5 rounded-2xl rounded-tl-none text-cyan-300 text-sm flex items-center space-x-3">
+                    <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+                    <span class="jarvis-font tracking-wider text-xs uppercase animate-pulse">JARVIS Processando e Sintetizando Resposta...</span>
+                </div>
+            `;
+            chatBox.appendChild(wrapper);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function hideThinkingIndicator() {
+            const el = document.getElementById('thinking-indicator');
+            if (el) el.remove();
         }
 
         chatForm.addEventListener('submit', async (e) => {
@@ -159,45 +207,65 @@
 
             appendMessage('Você', text, true, null, sendAudioUrl);
             userInput.value = '';
+            userInput.disabled = true;
+            sendBtn.disabled = true;
+
+            showThinkingIndicator();
+
+            // Extended Timeout (120s) com AbortController para requisições de ferramentas (ex: emails)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000);
 
             try {
                 const res = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text })
+                    body: JSON.stringify({ text: text }),
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
+                hideThinkingIndicator();
+
                 const data = await res.json();
                 if (data.reply) {
                     if (data.source) {
                         document.getElementById('model-badge').innerText = `MODELO: ${data.source.toUpperCase()}`;
                     }
-                    // Adiciona link para o áudio de resposta do Jarvis
                     const responseAudioUrl = `/api/audio?t=${Date.now()}`;
                     appendMessage('JARVIS', data.reply, false, data.source, responseAudioUrl);
                 } else if (data.error) {
                     appendMessage('JARVIS', `[Erro]: ${data.error}`);
                 }
             } catch (err) {
-                appendMessage('JARVIS', `[Erro de conexão]: ${err.message}`);
+                clearTimeout(timeoutId);
+                hideThinkingIndicator();
+                if (err.name === 'AbortError') {
+                    appendMessage('JARVIS', '[Erro]: A requisição demorou mais de 2 minutos e expirou.');
+                } else {
+                    appendMessage('JARVIS', `[Erro de conexão]: ${err.message}`);
+                }
+            } finally {
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                userInput.focus();
             }
         });
 
-        // Configuração de gravação de áudio do microfone para gerar player no chat
+        // Configuração de gravação de áudio do microfone
         async function startAudioRecording() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(stream);
                 audioChunks = [];
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0) audioChunks.push(event.data);
-                };
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
                 mediaRecorder.onstop = () => {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
                     currentAudioUrl = URL.createObjectURL(audioBlob);
                 };
                 mediaRecorder.start();
-            } catch(e) {
-                console.error("Erro ao gravar áudio:", e);
+            } catch(err) {
+                console.error("Erro na captura de áudio:", err);
             }
         }
 
@@ -238,7 +306,7 @@
                 micIcon.className = 'fa-solid fa-microphone text-cyan-300';
             };
 
-            // Modo Viva-Voz
+            // Modo Viva-Voz ("JARVIS")
             continuousRecognition = new SpeechRecognition();
             continuousRecognition.lang = 'pt-BR';
             continuousRecognition.continuous = true;
@@ -249,7 +317,7 @@
                     if (event.results[i].isFinal) {
                         const spoken = event.results[i][0].transcript.trim();
                         const lower = spoken.toLowerCase();
-                        
+
                         if (lower.includes('jarvis')) {
                             let cmd = lower.split('jarvis').pop().trim();
                             if (!cmd) cmd = spoken;
@@ -280,16 +348,18 @@
                         wakeToggle.className = 'px-3 py-1.5 rounded-lg border border-emerald-500/80 bg-emerald-950 text-emerald-300 text-xs flex items-center space-x-2 transition-all glow-cyan';
                         wakeText.innerText = 'Viva-Voz Ativo ("JARVIS")';
                     } catch (err) {
-                        alert("Por favor, permita o acesso ao microfone no seu navegador.");
+                        alert("Por favor, autorize o uso do microfone para ativar o modo viva-voz.");
                         isWakeMode = false;
                     }
                 } else {
+                    continuousRecognition.stop();
                     wakeDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
-                    wakeToggle.className = 'px-3 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 text-xs flex items-center space-x-2 transition-all';
+                    wakeToggle.className = 'px-3 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 text-xs flex items-center space-x-2 transition-all cursor-pointer';
                     wakeText.innerText = 'Modo Viva-Voz ("JARVIS")';
-                    try { continuousRecognition.stop(); } catch(e) {}
                 }
             });
+        } else {
+            wakeToggle.style.display = 'none';
         }
     </script>
 </body>
