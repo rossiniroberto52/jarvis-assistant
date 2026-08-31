@@ -14,9 +14,11 @@ import email
 import webbrowser
 from email.header import decode_header
 from email.mime.text import MIMEText
-from gmail_config import GMAIL_USER, GMAIL_APP_PASSWORD
+from gmail_config import GMAIL_USER, GMAIL_APP_PASSWORD, GMAIL_CREDENTIALS_FILE, GMAIL_TOKEN_FILE
 
 N8N_SERVER_URL = "http://100.120.161.101:5678"
+
+LAST_ACCESS_FILE = os.path.join(os.path.dirname(__file__), ".last_access_date")
 
 def get_time():
     """Retorna a data e hora atuais exatas do sistema do Senhor."""
@@ -26,6 +28,153 @@ def get_time():
     dia_semana = dias[now.weekday()]
     mes = meses[now.month - 1]
     return f"{dia_semana}, {now.day} de {mes} de {now.year}, às {now.strftime('%H:%M:%S')}."
+
+def _get_last_access_date():
+    """Lê a data do último acesso do arquivo persistente."""
+    try:
+        if os.path.exists(LAST_ACCESS_FILE):
+            with open(LAST_ACCESS_FILE, 'r') as f:
+                return f.read().strip()
+    except Exception:
+        pass
+    return None
+
+def _save_last_access_date():
+    """Salva a data atual como último acesso."""
+    try:
+        with open(LAST_ACCESS_FILE, 'w') as f:
+            f.write(datetime.date.today().isoformat())
+    except Exception:
+        pass
+
+def is_first_use_today():
+    """Verifica se é a primeira vez que o usuário usa o JARVIS hoje."""
+    today = datetime.date.today().isoformat()
+    last_access = _get_last_access_date()
+    return last_access != today
+
+def generate_morning_briefing():
+    """Gera um resumo matinal completo: clima, emails, calendário, tarefas, notícias."""
+    now = datetime.datetime.now()
+    dias = ['segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado', 'domingo']
+    meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+    dia_semana = dias[now.weekday()]
+    mes = meses[now.month - 1]
+    
+    briefing_parts = []
+    
+    # Header
+    briefing_parts.append(f"BOM DIA! Hoje é {dia_semana}, {now.day} de {mes} de {now.year}.")
+    briefing_parts.append("")
+    
+    # 1. Clima
+    try:
+        weather = get_weather("São Paulo")
+        briefing_parts.append(f"🌤️ CLIMA: {weather}")
+        briefing_parts.append("")
+    except Exception as e:
+        briefing_parts.append(f"🌤️ CLIMA: Não consegui puxar o tempo. Erro: {str(e)[:50]}")
+        briefing_parts.append("")
+    
+    # 2. Emails recentes
+    try:
+        emails = read_latest_emails(3)
+        if emails:
+            briefing_parts.append("📧 EMAILS RECENTES:")
+            briefing_parts.append(emails)
+        else:
+            briefing_parts.append("📧 EMAILS: Nenhum email novo.")
+        briefing_parts.append("")
+    except Exception as e:
+        briefing_parts.append(f"📧 EMAILS: Erro ao buscar. {str(e)[:50]}")
+        briefing_parts.append("")
+    
+    # 3. Calendário (Google Calendar)
+    try:
+        calendar = google_calendar_read("today", "today", 5)
+        if calendar:
+            briefing_parts.append("📅 AGENDA DE HOJE:")
+            briefing_parts.append(calendar)
+        else:
+            briefing_parts.append("📅 AGENDA: Nenhum compromisso hoje.")
+        briefing_parts.append("")
+    except Exception as e:
+        briefing_parts.append(f"📅 AGENDA: Erro ao buscar. {str(e)[:50]}")
+        briefing_parts.append("")
+    
+    # 4. Tarefas (Google Tasks)
+    try:
+        tasks = google_tasks_read("today", 5)
+        if tasks:
+            briefing_parts.append("✅ TAREFAS PENDENTES:")
+            briefing_parts.append(tasks)
+        else:
+            briefing_parts.append("✅ TAREFAS: Nenhuma tarefa pendente.")
+        briefing_parts.append("")
+    except Exception as e:
+        briefing_parts.append(f"✅ TAREFAS: Erro ao buscar. {str(e)[:50]}")
+        briefing_parts.append("")
+    
+    # 5. Resumo de notícias
+    try:
+        news = get_news_summary()
+        if news:
+            briefing_parts.append("📰 NOTÍCIAS DE HOJE:")
+            briefing_parts.append(news)
+        else:
+            briefing_parts.append("📰 NOTÍCIAS: Sem resumo disponível.")
+        briefing_parts.append("")
+    except Exception as e:
+        briefing_parts.append(f"📰 NOTÍCIAS: Erro ao buscar. {str(e)[:50]}")
+        briefing_parts.append("")
+    
+    # 6. Status do sistema
+    try:
+        sys_info = get_system_info()
+        briefing_parts.append(f"💻 SISTEMA: {sys_info}")
+    except Exception:
+        pass
+    
+    # Salvar último acesso
+    _save_last_access_date()
+    
+    return "\n".join(briefing_parts)
+
+def get_news_summary():
+    """Busca um resumo de notícias de hoje via RSS feeds."""
+    try:
+        rss_feeds = [
+            "https://rss.uol.com.br/feed/noticias.xml",
+            "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml",
+        ]
+        
+        headlines = []
+        for feed_url in rss_feeds[:2]:
+            try:
+                req = urllib.request.Request(feed_url, headers={
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) JARVIS/1.0'
+                })
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    content = response.read().decode('utf-8', errors='ignore')
+                    
+                    # Parse simples de RSS
+                    title_pattern = re.compile(r'<title[^>]*>(.*?)</title>', re.DOTALL | re.IGNORECASE)
+                    matches = title_pattern.findall(content)
+                    
+                    for match in matches[:3]:
+                        clean = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', match)
+                        clean = re.sub(r'<[^>]+>', '', clean).strip()
+                        if clean and len(clean) > 10 and clean not in headlines:
+                            headlines.append(clean)
+            except Exception:
+                continue
+        
+        if headlines:
+            return "\n".join(f"• {h}" for h in headlines[:5])
+        return None
+        
+    except Exception:
+        return None
 
 def get_system_info():
     """Retorna informações básicas de sistema (CPU, RAM, OS)."""
@@ -292,36 +441,83 @@ def send_email(to_email: str = "", subject: str = "Mensagem do Jarvis", body: st
     except Exception as e:
         return f"Erro ao enviar e-mail: {e}"
 
-def read_latest_emails(limit: int = 3):
-    """Lê os últimos e-mails da caixa de entrada do Gmail."""
-    if GMAIL_USER == "seu_email@gmail.com" or not GMAIL_APP_PASSWORD:
-        return "Erro: Credenciais do Gmail não configuradas no arquivo gmail_config.py."
-    try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-        mail.select("inbox")
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-        status, messages = mail.search(None, "ALL")
-        email_ids = messages[0].split()
-        if not email_ids:
+def get_gmail_service():
+    """Autentica e retorna a instância do serviço da API do Gmail via OAuth2."""
+    creds = None
+    if os.path.exists(GMAIL_TOKEN_FILE):
+        try:
+            from google.oauth2.credentials import Credentials
+            creds = Credentials.from_authorized_user_file(GMAIL_TOKEN_FILE, GMAIL_SCOPES)
+        except Exception:
+            creds = None
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                from google.auth.transport.requests import Request
+                creds.refresh(Request())
+                with open(GMAIL_TOKEN_FILE, "w") as token_file:
+                    token_file.write(creds.to_json())
+            except Exception:
+                creds = None
+
+        if not creds:
+            if not os.path.exists(GMAIL_CREDENTIALS_FILE):
+                return None
+            try:
+                from google_auth_oauthlib.flow import InstalledAppFlow
+                flow = InstalledAppFlow.from_client_secrets_file(GMAIL_CREDENTIALS_FILE, GMAIL_SCOPES)
+                creds = flow.run_local_server(port=0)
+                with open(GMAIL_TOKEN_FILE, "w") as token_file:
+                    token_file.write(creds.to_json())
+            except Exception:
+                return None
+
+    try:
+        from googleapiclient.discovery import build
+        return build("gmail", "v1", credentials=creds)
+    except Exception:
+        return None
+
+def read_latest_emails(limit: int = 3):
+    """Lê os últimos e-mails da caixa de entrada via Gmail API direta (OAuth2)."""
+    try:
+        service = get_gmail_service()
+        if not service:
+            return "Erro: Credenciais da API do Gmail não configuradas (credentials.json ou token.json ausente/inválido)."
+
+        results = service.users().messages().list(userId="me", maxResults=limit, q="in:inbox").execute()
+        messages = results.get("messages", [])
+
+        if not messages:
             return "Nenhum e-mail encontrado na caixa de entrada."
 
-        results = []
-        latest_ids = email_ids[-limit:]
-        for e_id in reversed(latest_ids):
-            _, msg_data = mail.fetch(e_id, "(RFC822)")
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    subject, encoding = decode_header(msg["Subject"])[0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode(encoding or "utf-8", errors="ignore")
-                    from_email = msg.get("From", "Desconhecido")
-                    results.append(f"- De: {from_email} | Assunto: {subject}")
-        mail.logout()
-        return "\n".join(results)
+        email_list = []
+        for msg_info in messages:
+            msg = service.users().messages().get(userId="me", id=msg_info["id"], format="full").execute()
+            payload = msg.get("payload", {})
+            headers = payload.get("headers", [])
+
+            subject = "Sem assunto"
+            from_email = "Desconhecido"
+            for header in headers:
+                name = header.get("name", "").lower()
+                if name == "subject":
+                    subject = header.get("value", "Sem assunto")
+                elif name == "from":
+                    from_email = header.get("value", "Desconhecido")
+
+            snippet = msg.get("snippet", "")
+            if snippet:
+                email_list.append(f"- De: {from_email} | Assunto: {subject} | Trecho: {snippet}")
+            else:
+                email_list.append(f"- De: {from_email} | Assunto: {subject}")
+
+        return "\n".join(email_list)
     except Exception as e:
-        return f"Erro ao ler e-mails: {e}"
+        return f"Erro ao ler e-mails via Gmail API: {e}"
 
 def trigger_n8n_workflow(path: str, data: dict = None):
     """Dispara um workflow ou webhook no servidor n8n."""
@@ -583,5 +779,6 @@ TOOL_MAP = {
     "run_command": lambda **kwargs: run_command(kwargs.get("cmd", "")),
     "trigger_n8n_workflow": lambda **kwargs: trigger_n8n_workflow(kwargs.get("path", "")),
     "mark_contact_important": lambda **kwargs: mark_contact_important(kwargs.get("name", ""), kwargs.get("is_important", True)),
-    "check_whatsapp_messages": lambda **kwargs: check_whatsapp_messages(kwargs.get("only_important", True))
+    "check_whatsapp_messages": lambda **kwargs: check_whatsapp_messages(kwargs.get("only_important", True)),
+    "morning_briefing": lambda **kwargs: generate_morning_briefing()
 }

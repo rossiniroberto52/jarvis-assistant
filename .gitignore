@@ -5,6 +5,15 @@ jarvis_agent/venv/
 jarvis_agent/gmail_local.py
 .env
 
+# Dados sensíveis do Jarvis
+jarvis_agent/knowledge/
+jarvis_agent/jarvis_history.db
+jarvis_agent/credentials.json
+jarvis_agent/token.json
+credentials.json
+token.json
+session-*.md
+
 # Audio / Temp files
 /tmp/
 *.mp3
