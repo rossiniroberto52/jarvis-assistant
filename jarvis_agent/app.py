@@ -11,10 +11,16 @@ import time
 import psutil
 from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
-from tools import TOOLS_SCHEMA, TOOL_MAP
+from tools import (
+    TOOLS_SCHEMA, TOOL_MAP,
+    extract_tool_calls_from_text, is_whatsapp_action_request,
+    is_hallucinated_send_claim, execute_fallback_whatsapp_send
+)
 from voice import speak
+import stt
 from stt import listen_mic
 import history
+import context_buffer
 import knowledge_loader
 from deadman import deadman
 
@@ -63,8 +69,13 @@ BASE_SYSTEM_PROMPT = """Você é o JARVIS, um assistente pessoal altamente proat
 
 Regras Invioláveis:
 1. Personalidade e Tratamento: Trate o usuário como 'Senhor', mas use a palavra 'Senhor' (ou 'Sr.') no máximo UMA VEZ por resposta, no início ou no final da frase. NUNCA repita 'Senhor' na mesma resposta.
-2. Autonomia Absoluta: NUNCA peça autorização ou permissão para abrir o navegador, tocar música, rodar comandos ou usar ferramentas. EXECUTE A FERRAMENTA IMEDIATAMENTE (ex: use 'play_youtube' para músicas/vídeos, 'open_app' para programas, 'open_url' para sites, 'read_latest_emails' para ler e-mails, 'get_time' para horários).
-3. Resposta Direta e Fala Natural: Responda com elegância, fluidez e objetividade. Evite pontuações excessivas ou formatações complexas de Markdown para manter a fala natural.
+2. Autonomia Absoluta: NUNCA peça autorização ou permissão para abrir o navegador, tocar música, rodar comandos ou usar ferramentas. EXECUTE A FERRAMENTA IMEDIATAMENTE (ex: use 'send_whatsapp_message' para WhatsApp, 'search_products' ou 'web_search' para pesquisas de produtos e web, 'play_youtube' para músicas/vídeos, 'open_app' para programas, 'open_url' para sites, 'read_latest_emails' para ler e-mails, 'get_time' para horários).
+3. Chamada de Ferramentas: Ao usar uma ferramenta, NUNCA escreva a chamada como texto corrido (ex: NUNCA escreva 'C: {...}' ou 'R: ... C: ...'). Use SEMPRE o mecanismo nativo de ferramentas.
+4. Validação de Ações e WhatsApp: NUNCA afirme ou finja que enviou uma mensagem de WhatsApp, abriu um site ou executou uma ação sem ter EXECUTADO A FERRAMENTA CORRESPONDENTE nesta rodada. Se for preciso enviar WhatsApp ou executar algo, você OBRIGATORIAMENTE deve invocar a ferramenta (`send_whatsapp_message`, etc.). NUNCA invente resultados.
+5. Ações em Múltiplos Turnos: Se o usuário pedir para enviar mensagem/WhatsApp em um turno (ex: 'Manda um WhatsApp para Pedro') e fornecer a mensagem no turno seguinte (ex: 'Diga que estou a caminho'), você DEVE OBRIGATORIAMENTE executar a ferramenta `send_whatsapp_message` combinando o contato do turno anterior ('Pedro') com a mensagem do turno atual ('estou a caminho').
+6. Transparência no WhatsApp: A ferramenta `check_whatsapp_messages` apenas abre ou foca o WhatsApp Web na tela do Senhor para que ele possa ler com os próprios olhos. O JARVIS NÃO tem acesso direto ao texto das mensagens recebidas do WhatsApp. NUNCA invente ou alucine o conteúdo das mensagens recebidas. Apenas informe que o WhatsApp foi aberto na tela para o Senhor ler.
+7. Resposta Direta e Fala Natural: Responda com elegância, fluidez e objetividade. Evite pontuações excessivas ou formatações complexas de Markdown para manter a fala natural.
+8. Exibição de Links e URLs de Pesquisas: Ao pesquisar na web ou produtos para o Senhor (usando `web_search`, `search_products`, etc.), você OBRIGATORIAMENTE DEVE INCLUIR os links/URLs completos, preços e resumos de cada resultado encontrado na sua resposta final. NUNCA omita os links ou resumos retornados pelas ferramentas.
 
 Personalidade Sarcástica (INSTAVEL):
 - Use sarcasmo inteligente e ácido em suas respostas, como um gênio preguiçoso que sabe mais que todos mas não se esforça pra esconder.
@@ -256,7 +267,7 @@ def call_ollama(msgs):
         if is_tailscale_on:
             print("[Preflight Decision] Internet OK + Tailscale ON. Seguindo fluxo de fallback remoto completo.")
             if MAIN_PC_OLLAMA_URL:
-                endpoints.append((MAIN_PC_OLLAMA_URL, MAIN_PC_MODEL, f"PC Principal ({MAIN_PC_MODEL})", 45))
+                endpoints.append((MAIN_PC_OLLAMA_URL, MAIN_PC_MODEL, f"PC Principal ({MAIN_PC_MODEL})", 120))
             endpoints.append((SERVER_OLLAMA_URL, SERVER_MODEL, f"Servidor ejuicap ({SERVER_MODEL})", 60))
             endpoints.append((LOCAL_OLLAMA_URL, LOCAL_MODEL, f"Local CPU ({LOCAL_MODEL})", LOCAL_OLLAMA_TIMEOUT))
         else:
@@ -264,18 +275,18 @@ def call_ollama(msgs):
             endpoints.append((LOCAL_OLLAMA_URL, LOCAL_MODEL, f"Local CPU ({LOCAL_MODEL})", LOCAL_OLLAMA_TIMEOUT))
 
     for url, model_name, label, timeout_sec in endpoints:
+        if url == LOCAL_OLLAMA_URL:
+            if not ensure_local_ollama():
+                print(f"[JARVIS Agent] Ignorando {label} pois o Ollama local não pôde ser iniciado.")
+                continue
+
         if not is_host_reachable(url, timeout=HOST_REACHABILITY_TIMEOUT):
-            print(f"[Preflight Skip] Host remoto do {label} não está aceitando conexão TCP ({url}). Pulando...")
+            print(f"[Preflight Skip] Host do {label} não está aceitando conexão TCP ({url}). Pulando...")
             continue
 
         if url != LOCAL_OLLAMA_URL:
             ram_ok, ram_mb = check_remote_ram(url)
             if not ram_ok:
-                continue
-
-        if url == LOCAL_OLLAMA_URL:
-            if not ensure_local_ollama():
-                print(f"[JARVIS Agent] Ignorando {label} pois o Ollama local não pôde ser iniciado.")
                 continue
 
         print(f"[JARVIS Agent] Conectando ao {label} ({url})...")
@@ -292,7 +303,8 @@ def call_ollama(msgs):
             "model": model_name,
             "messages": msgs,
             "stream": False,
-            "tools": tools_payload
+            "tools": tools_payload,
+            "keep_alive": "24h"
         }
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(chat_url, data=data, headers={"Content-Type": "application/json"})
@@ -307,13 +319,14 @@ def call_ollama(msgs):
                 print(f"[JARVIS Agent] /api/chat indisponível no {label} (404). Fallback para /api/generate...")
                 try:
                     prompt_text = "\n".join(
-                        f"[{m.get('role', 'user')}]: {m.get('content', '')}"
+                        f"[{m.get('role', 'user')}]: {(m.get('content') or '')}"
                         for m in msgs
                     )
                     gen_payload = {
                         "model": model_name,
                         "prompt": prompt_text,
-                        "stream": False
+                        "stream": False,
+                        "keep_alive": "24h"
                     }
                     gen_data = json.dumps(gen_payload).encode("utf-8")
                     gen_req = urllib.request.Request(generate_url, data=gen_data, headers={"Content-Type": "application/json"})
@@ -346,9 +359,9 @@ def process_jarvis_turn(user_text):
     except Exception as e:
         print(f"[History] Aviso ao buscar contexto: {e}")
 
-    if context_snippet and chat_history[0].get("role") == "system":
-        base = chat_history[0]["content"]
-        chat_history[0]["content"] = base + context_snippet
+    messages_to_send = [dict(m) for m in chat_history]
+    if messages_to_send and messages_to_send[0].get("role") == "system":
+        messages_to_send[0]["content"] = get_dynamic_system_prompt() + context_snippet
 
     t_start = time.time()
     backend_label = "erro"
@@ -356,12 +369,20 @@ def process_jarvis_turn(user_text):
     deadman.start()
     try:
         deadman.heartbeat()
-        response_data, source_label = call_ollama(chat_history)
+        response_data, source_label = call_ollama(messages_to_send)
         deadman.heartbeat()
         msg = response_data.get("message", {})
         backend_label = source_label
 
         tool_calls = msg.get("tool_calls", [])
+        content_text = msg.get("content", "")
+
+        # Extrair chamadas de ferramentas vazadas em texto corrido (ex: R: ... C: {"name": ...})
+        if not tool_calls and content_text:
+            extracted_calls, cleaned_text = extract_tool_calls_from_text(content_text)
+            if extracted_calls:
+                tool_calls = extracted_calls
+                msg["content"] = cleaned_text
 
         if tool_calls:
             print(f"[JARVIS Agent] Ferramentas invocadas: {len(tool_calls)}")
@@ -391,10 +412,17 @@ def process_jarvis_turn(user_text):
             final_data, _ = call_ollama(chat_history)
             deadman.heartbeat()
             final_msg = final_data.get("message", {})
-            reply_text = final_msg.get("content", "")
+            final_raw = final_msg.get("content", "")
+            _, reply_text = extract_tool_calls_from_text(final_raw)
+            final_msg["content"] = reply_text
             chat_history.append(final_msg)
         else:
-            reply_text = msg.get("content", "")
+            _, reply_text = extract_tool_calls_from_text(content_text)
+            # Prevenção de Alucinação de envio do WhatsApp: Se o usuário pediu envio e nenhuma ferramenta foi chamada, força o envio real via fallback
+            if is_whatsapp_action_request(user_text, chat_history):
+                reply_text = execute_fallback_whatsapp_send(user_text, chat_history)
+
+            msg["content"] = reply_text
             chat_history.append(msg)
 
     except Exception as e:
@@ -408,6 +436,10 @@ def process_jarvis_turn(user_text):
             history.save_command(user_text, reply_text, backend_label, duracao_ms)
         except Exception as e:
             print(f"[History] Erro ao salvar comando: {e}")
+        try:
+            chat_history = context_buffer.trim_chat_history(chat_history, max_messages=6)
+        except Exception as e:
+            print(f"[ContextBuffer] Erro ao truncar histórico: {e}")
 
     return reply_text, source_label
 
@@ -447,6 +479,33 @@ def listen():
     if not text:
         return jsonify({"text": ""})
     return jsonify({"text": text})
+
+@app.route("/api/audio_stt", methods=["POST"])
+def api_audio_stt():
+    """Recebe um arquivo de áudio enviado pelo frontend (webm/ogg/wav) e converte em texto via STT."""
+    if "audio" not in request.files:
+        return jsonify({"error": "Nenhum arquivo de áudio enviado", "success": False}), 400
+
+    audio_file = request.files["audio"]
+    if not audio_file.filename:
+        return jsonify({"error": "Arquivo inválido", "success": False}), 400
+
+    temp_dir = "/tmp"
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"upload_{int(time.time() * 1000)}.webm")
+    try:
+        audio_file.save(temp_path)
+        text = stt.transcribe_audio_file(temp_path)
+        return jsonify({"text": text, "success": True})
+    except Exception as e:
+        print(f"[STT API Error] {e}")
+        return jsonify({"error": str(e), "success": False}), 500
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
 
 @app.route("/api/history", methods=["GET"])
 def api_history():

@@ -130,6 +130,8 @@
         let mediaRecorder = null;
         let audioChunks = [];
         let currentAudioUrl = null;
+        let isRecording = false;
+        let activeStream = null;
 
         // Atualização em Tempo Real do Relógio Digital na HUD Web
         function updateHUDClock() {
@@ -251,62 +253,107 @@
             }
         });
 
-        // Configuração de gravação de áudio do microfone
+        // ==========================================
+        // CAPTURA DE VOZ E MICROFONE NO FRONTEND (MediaRecorder + Backend STT)
+        // ==========================================
+        micBtn.addEventListener('click', async () => {
+            if (isRecording) {
+                stopAudioRecording();
+            } else {
+                await startAudioRecording();
+            }
+        });
+
         async function startAudioRecording() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioChunks = [];
-                mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
-                mediaRecorder.onstop = () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                mediaRecorder = new MediaRecorder(activeStream);
+
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data.size > 0) audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    if (activeStream) {
+                        activeStream.getTracks().forEach(track => track.stop());
+                        activeStream = null;
+                    }
+
+                    if (audioChunks.length === 0) return;
+
+                    const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
                     if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
                     currentAudioUrl = URL.createObjectURL(audioBlob);
+
+                    await sendAudioToSTT(audioBlob);
                 };
+
                 mediaRecorder.start();
-            } catch(err) {
+                isRecording = true;
+
+                // UI Feedback - Gravando
+                micBtn.classList.remove('bg-cyan-950', 'border-cyan-400/50', 'text-cyan-300');
+                micBtn.classList.add('bg-red-950', 'border-red-500', 'text-red-400', 'animate-pulse');
+                micIcon.className = 'fa-solid fa-microphone-slash text-lg';
+                userInput.placeholder = "Ouvindo... Clique no mic para enviar sua fala, Senhor...";
+
+            } catch (err) {
                 console.error("Erro na captura de áudio:", err);
+                alert("Não foi possível acessar o microfone. Verifique as permissões do seu navegador.");
             }
         }
 
         function stopAudioRecording() {
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 mediaRecorder.stop();
-                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            }
+            isRecording = false;
+
+            // Restaurar UI
+            micBtn.classList.remove('bg-red-950', 'border-red-500', 'text-red-400', 'animate-pulse');
+            micBtn.classList.add('bg-cyan-950', 'border-cyan-400/50', 'text-cyan-300');
+            micIcon.className = 'fa-solid fa-microphone text-lg';
+            userInput.placeholder = "Digite ou diga 'Jarvis <comando>'...";
+        }
+
+        async function sendAudioToSTT(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'mic_recording.webm');
+
+            userInput.placeholder = "Transcrevendo voz...";
+
+            try {
+                const res = await fetch('/api/audio_stt', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+
+                if (data.text && data.text.trim()) {
+                    userInput.value = data.text.trim();
+                    userInput.placeholder = "Digite ou diga 'Jarvis <comando>'...";
+                    // Dispara envio automático
+                    setTimeout(() => chatForm.dispatchEvent(new Event('submit')), 100);
+                } else {
+                    userInput.placeholder = "Nenhuma fala detectada. Tente novamente, Senhor.";
+                    setTimeout(() => {
+                        userInput.placeholder = "Digite ou diga 'Jarvis <comando>'...";
+                    }, 3000);
+                }
+            } catch (err) {
+                console.error("Erro ao enviar áudio STT:", err);
+                userInput.placeholder = "Erro ao processar áudio.";
+                setTimeout(() => {
+                    userInput.placeholder = "Digite ou diga 'Jarvis <comando>'...";
+                }, 3000);
             }
         }
 
-        // Web Speech API
+        // Web Speech API - Modo Viva-Voz ("JARVIS")
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
         if (SpeechRecognition) {
-            const singleRec = new SpeechRecognition();
-            singleRec.lang = 'pt-BR';
-            singleRec.continuous = false;
-
-            micBtn.addEventListener('click', () => {
-                try {
-                    startAudioRecording();
-                    singleRec.start();
-                    micIcon.className = 'fa-solid fa-microphone-lines text-red-400 animate-bounce';
-                } catch(e) {
-                    console.error("Erro mic avulso:", e);
-                }
-            });
-
-            singleRec.onresult = (event) => {
-                stopAudioRecording();
-                userInput.value = event.results[0][0].transcript;
-                micIcon.className = 'fa-solid fa-microphone text-cyan-300';
-                setTimeout(() => chatForm.dispatchEvent(new Event('submit')), 200);
-            };
-
-            singleRec.onerror = singleRec.onend = () => {
-                stopAudioRecording();
-                micIcon.className = 'fa-solid fa-microphone text-cyan-300';
-            };
-
-            // Modo Viva-Voz ("JARVIS")
             continuousRecognition = new SpeechRecognition();
             continuousRecognition.lang = 'pt-BR';
             continuousRecognition.continuous = true;

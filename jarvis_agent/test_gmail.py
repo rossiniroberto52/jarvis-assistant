@@ -6,7 +6,7 @@ import sys
 # Ensure jarvis_agent is in python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tools import read_latest_emails, get_gmail_service
+from tools import read_latest_emails, send_email, get_gmail_service
 
 class TestGmailAPI(unittest.TestCase):
 
@@ -68,7 +68,27 @@ class TestGmailAPI(unittest.TestCase):
         mock_service.users().messages().list().execute.side_effect = Exception("API rate limit exceeded")
 
         result = read_latest_emails(3)
-        self.assertIn("Erro ao ler e-mails via Gmail API: API rate limit exceeded", result)
+        self.assertEqual(result, "Erro ao ler e-mails via Gmail API: API rate limit exceeded")
+
+    @patch("tools.get_gmail_service")
+    def test_send_email_success_gmail_api(self, mock_get_service):
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+
+        result = send_email("test@example.com", "Assunto", "Corpo do email")
+        self.assertEqual(result, "E-mail enviado com sucesso para test@example.com!")
+        mock_service.users().messages().send.assert_called_once()
+
+    @patch("tools.get_gmail_service")
+    def test_send_email_error_gmail_api(self, mock_get_service):
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+        mock_service.users().messages().send.side_effect = Exception("Insufficient Permission")
+
+        result = send_email("test@example.com", "Assunto", "Corpo do email")
+        self.assertIn("Erro ao enviar e-mail via Gmail API", result)
+        self.assertIn("Insufficient Permission", result)
+
 
 if __name__ == "__main__":
     unittest.main()

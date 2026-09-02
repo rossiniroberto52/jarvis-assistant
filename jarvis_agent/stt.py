@@ -1,3 +1,5 @@
+import os
+import subprocess
 import speech_recognition as sr
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
 
@@ -11,6 +13,43 @@ try:
     asound.snd_lib_error_set_handler(c_error_handler)
 except Exception:
     pass
+
+def transcribe_audio_file(audio_path: str, language: str = "pt-BR") -> str:
+    """
+    Recebe o caminho de um arquivo de áudio (webm, ogg, wav, mp3),
+    converte para WAV 16kHz mono via ffmpeg se necessário e transcreve com SpeechRecognition.
+    """
+    wav_path = audio_path
+    temp_wav = None
+
+    if not audio_path.endswith(".wav"):
+        temp_wav = audio_path + "_conv.wav"
+        try:
+            cmd = f'ffmpeg -y -i "{audio_path}" -ar 16000 -ac 1 "{temp_wav}"'
+            res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if res.returncode == 0 and os.path.exists(temp_wav):
+                wav_path = temp_wav
+        except Exception as e:
+            print(f"[STT] Falha ao converter via ffmpeg: {e}")
+            wav_path = audio_path
+
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(wav_path) as source:
+            audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data, language=language)
+            return text.strip()
+    except sr.UnknownValueError:
+        return ""
+    except Exception as e:
+        print(f"[STT] Erro no reconhecimento de áudio: {e}")
+        return ""
+    finally:
+        if temp_wav and os.path.exists(temp_wav):
+            try:
+                os.remove(temp_wav)
+            except Exception:
+                pass
 
 def listen_mic(prompt="Ouvindo... Fale agora, Senhor:"):
     """Captura áudio do microfone e converte em texto (em Português)."""
