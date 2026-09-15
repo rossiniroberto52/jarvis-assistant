@@ -34,6 +34,11 @@ async def receive_whatsapp(payload: WhatsAppWebhookRequest) -> WebhookResponse:
     if not clean_message:
         raise HTTPException(status_code=422, detail="Não foi possível extrair texto da mensagem")
 
+    #trava para numero pessoal!
+    if not clean_message.lower().startswith("jarvis"):
+        log.info(f"Mensagem de {message.phone} ignorada (não é pro Jarvis).")
+        return WebhookResponse(ok=True, phone=message.phone, message="Ignorado", forwarded=False)
+
     result = await forward_to_n8n(message.phone, clean_message)
     if not result["ok"]:
         raise HTTPException(status_code=503, detail=result["error"])
